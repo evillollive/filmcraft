@@ -221,8 +221,9 @@ pub fn render_caption(c: &Caption, style: &CaptionStyle, w: usize, h: usize) -> 
     if ow.checked_mul(oh).is_none_or(|pixels| pixels > MAX_OVERLAY_PIXELS) {
         return None;
     }
-    // the lines are laid out from the overlay's top edge (inside the padding), as they always were
-    let top = clip_top + pad_y;
+    // the lines are laid out from the overlay's top edge inside the padding, as they always were,
+    // except that padding pushed above the frame is clipped rather than moving the text down
+    let top = (by0 + pad_y).max(0.0);
     let mut cover = vec![0.0f32; ow * oh];
     let mut bg = vec![0.0f32; ow * oh];
     for (i, line) in lines.iter().enumerate() {
@@ -649,6 +650,20 @@ mod tests {
         for r in [f32::NAN, -5.0] {
             assert_eq!(render_caption(&cap("Hi"), &CaptionStyle { corner_radius: r, ..Default::default() }, 640, 360), square, "{r}");
         }
+    }
+
+    #[test]
+    fn padding_above_the_frame_is_clipped_without_moving_the_text() {
+        // a WebVTT cue at line:1% with 100 px of vertical padding: the box runs off the top of the
+        // frame, but the text stays where it is without padding
+        let first_text_row = |pad: f32| {
+            let st = CaptionStyle { background: false, background_padding: Some([0.0, pad]), ..Default::default() };
+            let mut c = cap("Hi");
+            c.settings = "line:1%".into();
+            let o = render_caption(&c, &st, 1920, 1080).unwrap();
+            (o.y..o.y + o.h as i32).find(|&y| (o.x..o.x + o.w as i32).any(|x| alpha(&o, x, y) > 0.5)).unwrap()
+        };
+        assert_eq!(first_text_row(100.0), first_text_row(0.0), "rows: pad 100 {} vs pad 0 {}", first_text_row(100.0), first_text_row(0.0));
     }
 
     #[test]
