@@ -1,7 +1,8 @@
 //! Caption layout and burn-in.
 //!
 //! [`overlay`] lays out the caption showing on a track at a time with the track's
-//! [`CaptionStyle`] (size relative to a 1080-line frame, colour, background box and its padding, outline,
+//! [`CaptionStyle`] (size relative to a 1080-line frame, colour, background box with its padding
+//! and corner radius, outline,
 //! alignment, anchor and margin; WebVTT `line:N%` and `align:` cue settings override the style)
 //! and rasterises it into a small premultiplied linear-light RGBA [`Overlay`] positioned in the
 //! frame. Renderers composite overlays over the finished picture.
@@ -66,18 +67,39 @@ fn lin(c: [u8; 4]) -> [f32; 4] {
     [srgb_to_linear(c[0] as f32 / 255.0) * a, srgb_to_linear(c[1] as f32 / 255.0) * a, srgb_to_linear(c[2] as f32 / 255.0) * a, a]
 }
 
-/// Add the box `x0..x1` × `y0..y1` (by area coverage) to the `ow`×`oh` mask at `(ox, oy)` in the frame.
-fn fill_box(bg: &mut [f32], (ox, oy, ow, oh): (i32, i32, usize, usize), (x0, y0, x1, y1): (f32, f32, f32, f32)) {
+/// Coverage of pixel `(x, y)` by the box `x0..x1` × `y0..y1` with corners rounded by `r`.
+///
+/// Square boxes use exact area coverage (what captions always drew); rounded ones the distance
+/// from the pixel centre to the rounded outline, anti-aliased over one pixel.
+fn box_cover(x: i32, y: i32, (x0, y0, x1, y1): (f32, f32, f32, f32), r: f32) -> f32 {
+    let (fx, fy) = (x as f32, y as f32);
+    let ax = ((fx + 1.0).min(x1) - fx.max(x0)).clamp(0.0, 1.0);
+    let ay = ((fy + 1.0).min(y1) - fy.max(y0)).clamp(0.0, 1.0);
+    let area = ax * ay;
+    let r = r.min((x1 - x0) / 2.0).min((y1 - y0) / 2.0);
+    if r <= 0.0 || area <= 0.0 {
+        return area;
+    }
+    // signed distance from the pixel centre to the rounded rectangle
+    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    let (hx, hy) = ((x1 - x0) / 2.0 - r, (y1 - y0) / 2.0 - r);
+    let qx = (fx + 0.5 - cx).abs() - hx;
+    let qy = (fy + 0.5 - cy).abs() - hy;
+    let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
+    area.min((0.5 - d).clamp(0.0, 1.0))
+}
+
+/// Add the box `x0..x1` × `y0..y1` with corners rounded by `r` to the `ow`×`oh` mask at `(ox, oy)`
+/// in the frame.
+fn fill_box(bg: &mut [f32], (ox, oy, ow, oh): (i32, i32, usize, usize), (x0, y0, x1, y1): (f32, f32, f32, f32), r: f32) {
     if !(x1 > x0 && y1 > y0) {
         return;
     }
     let (x_end, y_end) = (ox.saturating_add(i32::try_from(ow).unwrap_or(i32::MAX)), oy.saturating_add(i32::try_from(oh).unwrap_or(i32::MAX)));
     for y in (y0.floor() as i32).max(oy)..(y1.ceil() as i32).min(y_end) {
-        let fy = ((y as f32 + 1.0).min(y1) - (y as f32).max(y0)).clamp(0.0, 1.0);
         for x in (x0.floor() as i32).max(ox)..(x1.ceil() as i32).min(x_end) {
-            let fx = ((x as f32 + 1.0).min(x1) - (x as f32).max(x0)).clamp(0.0, 1.0);
             if let Some(v) = bg.get_mut((y - oy) as usize * ow + (x - ox) as usize) {
-                *v = (*v + fx * fy).min(1.0);
+                *v = (*v + box_cover(x, y, (x0, y0, x1, y1), r)).min(1.0);
             }
         }
     }
@@ -157,6 +179,7 @@ pub fn render_caption(c: &Caption, style: &CaptionStyle, w: usize, h: usize) -> 
         }
         None => ((px * 0.3).round(), 0.0),
     };
+    let radius = if style.corner_radius.is_finite() { style.corner_radius.clamp(0.0, 500.0) * scale } else { 0.0 };
     let block_h = lh * lines.len() as f32;
     let (line_override, align_override) = vtt_overrides(&c.settings);
     let align = align_override.unwrap_or(style.align);
@@ -205,7 +228,7 @@ pub fn render_caption(c: &Caption, style: &CaptionStyle, w: usize, h: usize) -> 
     for (i, line) in lines.iter().enumerate() {
         let lt = top + lh * i as f32;
         if style.background && style.background_color[3] > 0 {
-            fill_box(&mut bg, (ox, oy, ow, oh), (xs[i] - pad_x, lt - pad_y, xs[i] + widths[i] + pad_x, lt + lh + pad_y));
+            fill_box(&mut bg, (ox, oy, ow, oh), (xs[i] - pad_x, lt - pad_y, xs[i] + widths[i] + pad_x, lt + lh + pad_y), radius);
         }
         let baseline = lt + (lh - (asc + desc)) / 2.0 + asc;
         let l = layout(line, &ts, &ParagraphStyle::default());
@@ -580,6 +603,51 @@ mod tests {
             // the bottom margin is measured to the box edge, padding included
             let bottom = (y1 + 1) as f32;
             assert!((bottom - (h as f32 - 0.08 * h as f32)).abs() <= 2.0, "{pad:?}@{h}: box bottom {bottom}");
+        }
+    }
+
+    #[test]
+    fn corner_radius_rounds_the_box() {
+        let st =
+            CaptionStyle { size: 58.0, background_color: [0, 0, 0, 255], background_padding: Some([20.0, 20.0]), corner_radius: 18.0, ..Default::default() };
+        let o = render_caption(&cap("Hello world"), &st, 1920, 1080).unwrap();
+        let (x0, x1) = row_span(&o, o.y + o.h as i32 / 2).unwrap();
+        let (y0, y1) = col_span(&o, (x0 + x1) / 2).unwrap();
+        // the corner pixels are empty; the edges between the corners are solid
+        for (cx, cy) in [(x0, y0), (x1, y0), (x0, y1), (x1, y1)] {
+            assert!(alpha(&o, cx, cy) < 0.05, "corner ({cx},{cy}) alpha {}", alpha(&o, cx, cy));
+        }
+        assert!(alpha(&o, x0 + 18, y0) > 0.95 && alpha(&o, x0, y0 + 18) > 0.95);
+        // along the diagonal the outline is r·(1 − 1/√2) ≈ 5.3 px in from the corner
+        let k = (0..18).find(|&k| alpha(&o, x0 + k, y0 + k) > 0.5).unwrap();
+        assert!((k as f32 - 18.0 * (1.0 - std::f32::consts::FRAC_1_SQRT_2)).abs() <= 1.5, "diagonal inset {k}");
+        // the radius scales with the frame: 18 at 1080 lines is 36 px at 2160
+        let o4 = render_caption(&cap("Hello world"), &st, 3840, 2160).unwrap();
+        let (a0, a1) = row_span(&o4, o4.y + o4.h as i32 / 2).unwrap();
+        let (b0, _) = col_span(&o4, (a0 + a1) / 2).unwrap();
+        let k4 = (0..36).find(|&k| alpha(&o4, a0 + k, b0 + k) > 0.5).unwrap();
+        assert!((k4 as f32 - 36.0 * (1.0 - std::f32::consts::FRAC_1_SQRT_2)).abs() <= 1.5, "diagonal inset at 2160: {k4}");
+        // radius 0 keeps square corners
+        let square = CaptionStyle { corner_radius: 0.0, ..st.clone() };
+        let o = render_caption(&cap("Hello world"), &square, 1920, 1080).unwrap();
+        assert!(alpha(&o, x0, y0) > 0.95, "square corner alpha {}", alpha(&o, x0, y0));
+        // a radius larger than the box is capped at half its height: a pill, still solid in the middle
+        let pill = CaptionStyle { corner_radius: 400.0, ..st };
+        let o = render_caption(&cap("Hello world"), &pill, 1920, 1080).unwrap();
+        assert!(alpha(&o, (x0 + x1) / 2, (y0 + y1) / 2) > 0.95);
+        assert!(alpha(&o, x0, y0) < 0.05);
+    }
+
+    #[test]
+    fn hostile_corner_radius_is_clamped() {
+        for r in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -5.0, 1e30] {
+            let st = CaptionStyle { corner_radius: r, background_padding: Some([1e30, -3.0]), ..Default::default() };
+            let res = std::panic::catch_unwind(|| render_caption(&cap("Hello world"), &st, 640, 360));
+            assert!(res.is_ok(), "{r}");
+        }
+        let square = render_caption(&cap("Hi"), &CaptionStyle::default(), 640, 360);
+        for r in [f32::NAN, -5.0] {
+            assert_eq!(render_caption(&cap("Hi"), &CaptionStyle { corner_radius: r, ..Default::default() }, 640, 360), square, "{r}");
         }
     }
 

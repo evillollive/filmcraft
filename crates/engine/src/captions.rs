@@ -248,7 +248,7 @@ fn track_json(s: &Session, t: &CaptionTrack, index: usize) -> Value {
             "background": t.style.background, "backgroundColor": hex(t.style.background_color),
             "align": format!("{:?}", t.style.align).to_lowercase(), "anchor": format!("{:?}", t.style.anchor).to_lowercase(),
             "margin": t.style.margin, "lineSpacing": t.style.line_spacing, "outline": t.style.outline, "outlineColor": hex(t.style.outline_color),
-            "backgroundPadding": t.style.background_padding,
+            "backgroundPadding": t.style.background_padding, "cornerRadius": t.style.corner_radius,
         },
         "captions": t.captions.iter().map(|c| caption_json(s, c)).collect::<Vec<_>>(),
     })
@@ -367,7 +367,7 @@ pub fn commands() -> Vec<CommandSpec> {
             "Caption Track Style",
             &[],
             None,
-            r##"{"track":id|"C1","font":str?,"size":f32?,"color":"#rrggbb[aa]"?,"background":bool?,"backgroundColor":"#rrggbbaa"?,"backgroundPadding":px at 1080 lines|[x,y]|null (null = automatic: 0.3 × size left/right, none above/below)?,"align":"left|center|right"?,"anchor":"top|middle|bottom"?,"margin":0..0.45 (fraction of frame height)?,"lineSpacing":f32?,"outline":f32?,"outlineColor":str?,"reset":bool?}"##,
+            r##"{"track":id|"C1","font":str?,"size":f32?,"color":"#rrggbb[aa]"?,"background":bool?,"backgroundColor":"#rrggbbaa"?,"backgroundPadding":px at 1080 lines|[x,y]|null (null = automatic: 0.3 × size left/right, none above/below)?,"cornerRadius":px at 1080 lines=0?,"align":"left|center|right"?,"anchor":"top|middle|bottom"?,"margin":0..0.45 (fraction of frame height)?,"lineSpacing":f32?,"outline":f32?,"outlineColor":str?,"reset":bool?}"##,
             has_caption_track,
             |s, p| {
                 let tid = track_param(s, p).ok_or_else(|| {
@@ -401,6 +401,9 @@ pub fn commands() -> Vec<CommandSpec> {
                     }
                     if let Some(c) = p.get("backgroundColor").and_then(parse_color) {
                         y.background_color = c;
+                    }
+                    if let Some(v) = f64_p(&p, "cornerRadius").filter(|v| v.is_finite()) {
+                        y.corner_radius = (v as f32).clamp(0.0, 500.0);
                     }
                     if let Some(v) = p.get("backgroundPadding") {
                         y.background_padding = padding_p(v).ok_or_else(|| bad("captions.setStyle", "`backgroundPadding` must be a number, [x, y] or null"))?;

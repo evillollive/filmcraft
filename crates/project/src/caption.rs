@@ -97,6 +97,8 @@ pub struct CaptionStyle {
     /// bottom]`. `None` keeps the automatic padding: 0.3 × the font size left and right, none above
     /// or below.
     pub background_padding: Option<[f32; 2]>,
+    /// Background corner radius in pixels at 1080 lines (0 = square), capped at half the box.
+    pub corner_radius: f32,
 }
 
 impl Default for CaptionStyle {
@@ -114,6 +116,7 @@ impl Default for CaptionStyle {
             outline: 0.0,
             outline_color: [0, 0, 0, 255],
             background_padding: None,
+            corner_radius: 0.0,
         }
     }
 }
@@ -317,6 +320,15 @@ mod tests {
         assert_eq!(st.background_padding, None);
         let padded = CaptionStyle { background_padding: Some([20.0, 12.0]), ..Default::default() };
         assert_eq!(serde_json::from_str::<CaptionStyle>(&serde_json::to_string(&padded).unwrap()).unwrap(), padded);
+    }
+
+    #[test]
+    fn styles_saved_without_a_corner_radius_have_square_corners() {
+        let old = r#"{"font":"Inter","size":54.0,"color":[255,255,255,255],"background":true,"background_color":[0,0,0,191],
+            "align":"Center","anchor":"Bottom","margin":0.08,"line_spacing":1.25,"outline":0.0,"outline_color":[0,0,0,255]}"#;
+        let st: CaptionStyle = serde_json::from_str(old).unwrap();
+        assert_eq!(st, CaptionStyle::default());
+        assert_eq!(st.corner_radius, 0.0);
     }
 
     #[test]

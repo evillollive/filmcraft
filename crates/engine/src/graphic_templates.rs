@@ -923,6 +923,8 @@ fn upgrade_caption(s: &mut Session, p: &Value) -> Result<Value> {
             set(&mut layer, "background_color", ParamValue::Color(col(st.background_color)));
             set(&mut layer, "background_opacity", ParamValue::Float(st.background_color[3] as f64 / 2.55));
             set(&mut layer, "background_size", ParamValue::Float(pad.unwrap_or(size * 0.2)));
+            let radius = if st.corner_radius.is_finite() { st.corner_radius.clamp(0.0, 500.0) as f64 * k } else { 0.0 };
+            set(&mut layer, "background_radius", ParamValue::Float(radius));
         }
         if st.outline > 0.0 {
             set(&mut layer, "stroke", ParamValue::Bool(true));

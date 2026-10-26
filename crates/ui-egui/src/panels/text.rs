@@ -724,6 +724,15 @@ fn style_strip(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, track_idx: us
                 actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "backgroundPadding": pad})));
             }
         }
+        let mut radius = st.corner_radius;
+        let resp = ui
+            .add(crate::widgets::number_drag(&mut radius).range(0.0..=200.0).speed(0.5).prefix(tl!("Radius ")).suffix(" px"))
+            .on_hover_text(tl!("Box corner radius (px at 1080 lines)"));
+        app.auto.add("text.captions.style.cornerRadius", resp.rect, "Caption box corner radius");
+        let escaped = resp.drag_stopped() && ui.input(|i| i.key_pressed(egui::Key::Escape));
+        if !escaped && (resp.drag_stopped() || (resp.changed() && !resp.dragged())) {
+            actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "cornerRadius": radius})));
+        }
         ui.label(egui::RichText::new(tl!("Align")).size(11.0).color(app.tokens.text_dim));
         for (a, icon_txt, name, tip) in [
             (CaptionAlign::Left, "L", "left", tl!("Align left")),

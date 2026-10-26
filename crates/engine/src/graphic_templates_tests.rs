@@ -321,6 +321,18 @@ fn upgrade_caption_carries_the_background_padding() {
 }
 
 #[test]
+fn upgrade_caption_carries_the_corner_radius() {
+    let mut s = demo("gt-caption-radius");
+    s.execute("captions.add", json!({"text": "Rounded", "seconds": 600, "durationSeconds": 2})).unwrap();
+    s.execute("captions.setStyle", json!({"cornerRadius": 18})).unwrap();
+    let r = s.execute("graphics.upgradeCaption", json!({})).unwrap();
+    let it = item(&s, ClipId(r["clips"][0].as_u64().unwrap()));
+    let e = it.effects.iter().find(|e| e.effect == "graphic_text").unwrap();
+    let k = canvas(&s).1 as f64 / 1080.0;
+    assert_eq!(e.param("background_radius").unwrap().value, ParamValue::Float(18.0 * k));
+}
+
+#[test]
 fn source_graphics_share_edits() {
     let mut s = demo("gt-source");
     let c = clip_of(&s.execute("graphics.newText", json!({"text": "Shared"})).unwrap());

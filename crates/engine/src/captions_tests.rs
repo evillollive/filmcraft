@@ -244,3 +244,18 @@ fn set_style_background_padding() {
     s.execute("captions.setStyle", json!({"backgroundPadding": null})).unwrap();
     assert_eq!(pad(&s), None, "null goes back to automatic");
 }
+
+#[test]
+fn set_style_corner_radius() {
+    let mut s = demo();
+    s.execute("captions.add", json!({"text": "Rounded", "seconds": 1.0})).unwrap();
+    let r = |s: &Session| s.active_sequence().unwrap().caption_tracks[0].style.corner_radius;
+    assert_eq!(r(&s), 0.0);
+    s.execute("captions.setStyle", json!({"cornerRadius": 18})).unwrap();
+    assert_eq!(r(&s), 18.0);
+    assert_eq!(s.execute("captions.list", json!({})).unwrap()["tracks"][0]["style"]["cornerRadius"], 18.0);
+    for (v, want) in [(-3.0, 0.0), (1e9, 500.0)] {
+        s.execute("captions.setStyle", json!({"cornerRadius": v})).unwrap();
+        assert_eq!(r(&s), want);
+    }
+}
