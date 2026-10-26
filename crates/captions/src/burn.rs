@@ -1,13 +1,14 @@
 //! Caption layout and burn-in.
 //!
 //! [`overlay`] lays out the caption showing on a track at a time with the track's
-//! [`CaptionStyle`] (size relative to a 1080-line frame, colour, background box and its padding, outline,
+//! [`CaptionStyle`] (size relative to a 1080-line frame, colour, background box per line or around
+//! the whole caption and its padding, outline,
 //! alignment, anchor and margin; WebVTT `line:N%` and `align:` cue settings override the style)
 //! and rasterises it into a small premultiplied linear-light RGBA [`Overlay`] positioned in the
 //! frame. Renderers composite overlays over the finished picture.
 
 use filmcraft_color::srgb_to_linear;
-use filmcraft_project::{Caption, CaptionAlign, CaptionAnchor, CaptionStyle, CaptionTrack, Sequence};
+use filmcraft_project::{Caption, CaptionAlign, CaptionAnchor, CaptionBoxMode, CaptionStyle, CaptionTrack, Sequence};
 use filmcraft_time::Tick;
 
 use filmcraft_text::{ParagraphStyle, TextStyle, layout, render};
@@ -202,9 +203,16 @@ pub fn render_caption(c: &Caption, style: &CaptionStyle, w: usize, h: usize) -> 
     let top = clip_top + pad_y;
     let mut cover = vec![0.0f32; ow * oh];
     let mut bg = vec![0.0f32; ow * oh];
+    let draw_box = style.background && style.background_color[3] > 0;
+    if draw_box && style.box_mode == CaptionBoxMode::Block {
+        // one box: the widest line ± padding across, all lines ± padding down
+        let text_l = xs.iter().fold(f32::MAX, |a, &x| a.min(x));
+        let text_r = xs.iter().zip(&widths).fold(f32::MIN, |a, (x, lw)| a.max(x + lw));
+        fill_box(&mut bg, (ox, oy, ow, oh), (text_l - pad_x, top - pad_y, text_r + pad_x, top + block_h + pad_y));
+    }
     for (i, line) in lines.iter().enumerate() {
         let lt = top + lh * i as f32;
-        if style.background && style.background_color[3] > 0 {
+        if draw_box && style.box_mode == CaptionBoxMode::Line {
             fill_box(&mut bg, (ox, oy, ow, oh), (xs[i] - pad_x, lt - pad_y, xs[i] + widths[i] + pad_x, lt + lh + pad_y));
         }
         let baseline = lt + (lh - (asc + desc)) / 2.0 + asc;
@@ -581,6 +589,41 @@ mod tests {
             let bottom = (y1 + 1) as f32;
             assert!((bottom - (h as f32 - 0.08 * h as f32)).abs() <= 2.0, "{pad:?}@{h}: box bottom {bottom}");
         }
+    }
+
+    #[test]
+    fn block_box_wraps_the_whole_caption() {
+        let st = CaptionStyle {
+            size: 58.0,
+            background_color: [0, 0, 0, 255],
+            background_padding: Some([20.0, 20.0]),
+            box_mode: CaptionBoxMode::Block,
+            ..Default::default()
+        };
+        let c = cap("Hi\nA much longer second line");
+        let o = render_caption(&c, &st, 1920, 1080).unwrap();
+        let ts = caption_style("Inter", 58.0);
+        let long = filmcraft_text::measure("A much longer second line", &ts);
+        let lh = 58.0 * st.line_spacing;
+        // the box spans the widest line ± padding, centred, and both lines ± padding
+        let (x0, x1) = row_span(&o, o.y + o.h as i32 / 2).unwrap();
+        assert!(((x1 - x0 + 1) as f32 - (long + 40.0)).abs() <= 2.0, "box width {}..{}", x0, x1);
+        assert!(((x0 + x1 + 1) as f32 / 2.0 - 960.0).abs() <= 1.5, "box centre {x0}..{x1}");
+        let (y0, y1) = col_span(&o, 960).unwrap();
+        assert!(((y1 - y0 + 1) as f32 - (2.0 * lh + 40.0)).abs() <= 2.0, "box height {y0}..{y1}");
+        assert!(((y1 + 1) as f32 - 0.92 * 1080.0).abs() <= 2.0, "bottom edge {y1}");
+        // the short first line's row is as wide as the block; a box per line would hug "Hi"
+        let (a0, a1) = row_span(&o, y0 + 25).unwrap();
+        assert!((a0 - x0).abs() <= 1 && (a1 - x1).abs() <= 1, "first-line row {a0}..{a1} vs block {x0}..{x1}");
+        let lines = CaptionStyle { box_mode: CaptionBoxMode::Line, ..st.clone() };
+        let o = render_caption(&c, &lines, 1920, 1080).unwrap();
+        let (l0, l1) = row_span(&o, y0 + 25).unwrap();
+        assert!(l1 - l0 < x1 - x0 - 100, "per-line box {l0}..{l1} as wide as the block");
+        // with the automatic padding the block is as wide as the widest line's box would be
+        let auto = CaptionStyle { background_padding: None, ..st };
+        let o = render_caption(&c, &auto, 1920, 1080).unwrap();
+        let (b0, b1) = row_span(&o, o.y + o.h as i32 / 2).unwrap();
+        assert!(((b1 - b0 + 1) as f32 - (long + 2.0 * (58.0_f32 * 0.3).round())).abs() <= 2.0, "automatic padding {b0}..{b1}");
     }
 
     #[test]

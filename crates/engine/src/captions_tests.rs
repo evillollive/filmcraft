@@ -244,3 +244,17 @@ fn set_style_background_padding() {
     s.execute("captions.setStyle", json!({"backgroundPadding": null})).unwrap();
     assert_eq!(pad(&s), None, "null goes back to automatic");
 }
+
+#[test]
+fn set_style_box_mode() {
+    let mut s = demo();
+    s.execute("captions.add", json!({"text": "Boxed", "seconds": 1.0})).unwrap();
+    let mode = |s: &Session| s.active_sequence().unwrap().caption_tracks[0].style.box_mode;
+    assert_eq!(mode(&s), filmcraft_project::CaptionBoxMode::Line);
+    s.execute("captions.setStyle", json!({"boxMode": "block"})).unwrap();
+    assert_eq!(mode(&s), filmcraft_project::CaptionBoxMode::Block);
+    assert_eq!(s.execute("captions.list", json!({})).unwrap()["tracks"][0]["style"]["boxMode"], "block");
+    assert!(s.execute("captions.setStyle", json!({"boxMode": "bubble"})).is_err());
+    s.execute("captions.setStyle", json!({"reset": true})).unwrap();
+    assert_eq!(mode(&s), filmcraft_project::CaptionBoxMode::Line);
+}
