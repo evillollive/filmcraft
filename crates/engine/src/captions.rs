@@ -671,5 +671,4 @@ fn show_all(s: &mut Session, on: bool) -> Result<Value> {
 }
 
 #[cfg(test)]
-#[path = "captions_tests.rs"]
 mod tests;
